@@ -62,7 +62,8 @@
                 Return False
             End If
             If ContainsToken(.token) Then
-                Outp(MsgType.WARNING, hdr, "adding keyword '" & .keyword & "' with duplicated token (for '" & .keyword & "')")
+                Outp(MsgType.WARNING, hdr, "adding keyword '" & .keyword & "' with duplicated token (for '" &
+                     GetKeywordByToken(.token) & "')")
                 'Return False
             End If
             funcSet.Add(f)
@@ -115,17 +116,18 @@
         Return Nothing
     End Function
 
-    Public Function GetKeywordByToken(token As Integer) As String
-        For Each f As Funct In funcSet
-            If f.token = token Then Return f.keyword
-        Next
-        Return String.Empty
-    End Function
-
-    Public Function GetSpacedKeywordByToken(token As Integer) As String
+    Public Function GetKeywordByToken(token As Integer, Optional ByRef spacePadding As Boolean = False) As String
         For Each f As Funct In funcSet
             If f.token = token Then
-                If f.isIstruction Or f.isCommand Then Return " " & f.keyword & " " Else Return f.keyword
+                If spacePadding Then
+                    If f.isIstruction Or f.isCommand Then
+                        Return " " & f.keyword & " " ' command keyword or statement keyword
+                    Else
+                        Return f.keyword ' function keyword
+                    End If
+                Else
+                    Return f.keyword
+                End If
             End If
         Next
         Return String.Empty
@@ -154,7 +156,18 @@
     End Function
 
     Public Function ContainsToken(token As Integer) As Boolean
-        Return jumpTable(token) IsNot Nothing
+        'Return jumpTable(token) IsNot Nothing
+        If jumpTable(token) Is Nothing Then
+            For Each fs As Funct In funcSet
+                If fs.token = token Then Return True
+            Next
+            Return False
+        End If
+        Return True
     End Function
 
+    Public Function isFunction(token As Integer) As Boolean
+        Dim f As Funct = GetFunctionByToken(token)
+        If f Is Nothing Then Return False Else Return f.IsFunction()
+    End Function
 End Class

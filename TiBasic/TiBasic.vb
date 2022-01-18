@@ -12,9 +12,8 @@ Public Class TiBasic
     Public Const MAX_FLOAT As Double = 9.99999E+127
     Public Const DEF_RUN_SCRCOLOR As Integer = TiColor.LightGreen
     Protected ReadOnly TOKEN_PREFIX As Char = "%"c
-    Protected Const TOKEN_BASECODE As Integer = 48
-    Protected Const DBGMSG_PREFIX As String = "-- "
-    Protected Const VAR_ADMITTED_CHARS As String = "@[]\-$ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    Protected Const TOKEN_BASECODE As Byte = 0 '48
+    Protected Const VAR_ADMITTED_CHARS As String = "@[]\-$ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
     Protected Const DEF_ARRAY_DIM_SIZE As Integer = 10
     Protected Const PLAIN_TEXT_SUBDIR = "Text"
     Protected numbering As Boolean
@@ -39,6 +38,13 @@ Public Class TiBasic
     Protected IOError As Integer
     'Protected ReadOnly InputCompletedEvent As New Threading.ManualResetEvent(False)
     Protected runtimeTextInputReady As Boolean
+
+    Protected Structure ProgramFileHeader
+        Public lineNumTable_Start As UInt16
+        Public lineNumTable_End As UInt16
+        Public programLines_End As UInt16
+        Public chkWord As UInt16
+    End Structure
 
     Public Enum CmdId
         RUN = &H0
@@ -145,10 +151,11 @@ Public Class TiBasic
 
     Sub New(ByRef m As TI99)
         MyBase.New(m)
+        Text.Encoding.RegisterProvider(Text.CodePagesEncodingProvider.Instance)
         spaceSeparators = True
-        cnsl = New TiBasicConsole(m.video, m.renderBox)
-        m.textUI.Dispose()
-        m.textUI = cnsl
+        cnsl = New TiBasicConsole(m, m.renderBox)
+        m.consl.Dispose()
+        m.consl = cnsl
         numbering = False
         inputSetupStr = String.Empty
         optionBase0 = True
@@ -180,6 +187,7 @@ Public Class TiBasic
         cmdSet.AddCommand("RUN", CmdId.RUN, False, False, AddressOf CMD_Run)
         cmdSet.AddCommand("SAVE", CmdId.SAVE, True, False, AddressOf CMD_Save)
         cmdSet.AddCommand("OLD", CmdId.OLD, True, False, AddressOf CMD_Old)
+        cmdSet.AddCommand("BREAK", CmdId.BREAK, False, True, AddressOf CMD_Break)
 
         ' program instructions
         cmdSet.AddIstruction("PRINT", IstrId.PRINT, False, True, False, AddressOf ISTR_Print)
@@ -201,9 +209,9 @@ Public Class TiBasic
         cmdSet.AddIstruction("READ", IstrId.READ, True, True, False, AddressOf ISTR_Read)
         cmdSet.AddIstruction("RESTORE", IstrId.RESTORE, False, True, False, AddressOf ISTR_Restore)
         cmdSet.AddIstruction("END", IstrId._END, False, True, False, AddressOf ISTR_End)
-        cmdSet.AddIstruction("FOR", IstrId._FOR, True, True, False, AddressOf ISTR_For)
-        cmdSet.AddIstruction("NEXT", IstrId._NEXT, True, True, True, AddressOf ISTR_Next)
-        cmdSet.AddIstruction("STEP", IstrId._STEP, True, True, False, AddressOf ISTR_NoOp)
+        cmdSet.AddIstruction("FOR", IstrId._FOR, True, False, False, AddressOf ISTR_For)
+        cmdSet.AddIstruction("NEXT", IstrId._NEXT, True, False, True, AddressOf ISTR_Next)
+        cmdSet.AddIstruction("STEP", IstrId._STEP, True, False, False, AddressOf ISTR_NoOp)
         cmdSet.AddIstruction("RANDOMIZE", IstrId.RANDOM, False, True, False, AddressOf ISTR_Random)
         cmdSet.AddIstruction("STOP", IstrId._STOP, False, True, False, AddressOf ISTR_End)
         cmdSet.AddIstruction("DIM", IstrId._DIM, True, True, False, AddressOf ISTR_Dim)
@@ -230,11 +238,12 @@ Public Class TiBasic
         cmdSet.AddFunction("SEG$", FunId.SEG, True, AddressOf FUN_Seg)
         cmdSet.AddFunction("POS", FunId.POS, True, AddressOf FUN_Pos)
         cmdSet.AddFunction("RND", FunId.RND, False, AddressOf FUN_Rnd)
-        cmdSet.AddFunction("TAB", FunId.TAB, False, AddressOf FUN_Tab) ' solo per istruzione PRINT
+        cmdSet.AddFunction("TAB", FunId.TAB, True, AddressOf FUN_Tab) ' solo per istruzione PRINT
 
         ' operators
         operSet.AddBinaryNumericOperator("^", 5, AddressOf OPER_Power)
         operSet.AddBinaryNumericOperator("*", 4, AddressOf OPER_Product)
+        operSet.AddBinaryNumericOperator("/", 4, AddressOf OPER_Division)
         operSet.AddOperator("+", 3, False, False, True, False, AddressOf OPER_Sum)
         operSet.AddOperator("-", 3, False, False, True, False, AddressOf OPER_Subtraction)
         operSet.AddBinaryOperator("<>", 2, AddressOf OPER_DiffersFrom)
@@ -290,10 +299,9 @@ Public Class TiBasic
         ExecCommand("NEW")
     End Sub
 
-    Public Overrides Sub Init()
+    Public Overrides Sub Start()
         code.Clear()
         ClearVariables()
-        'machine.video.Init()
         cnsl.Init()
         cnsl.PrintLn(ROM_NAME & " READY")
         cnsl.StartNewTextLineInput()
@@ -303,13 +311,13 @@ Public Class TiBasic
         Return ROM_NAME
     End Function
 
-    Public Overrides Sub EndActivity()
+    Public Overrides Sub Quit()
         StopRun(True)
     End Sub
 
-    Public Sub ClearVariables()
-        variables.Clear()
-    End Sub
+    'Public Sub ClearVariables()
+    '    variables.Clear()
+    'End Sub
 
     Public Sub LineInputEvent(ByRef sender As Object, ByRef line As String) Handles cnsl.TextInputCompleted
         If running Then
@@ -328,7 +336,7 @@ Public Class TiBasic
     ' - la memorizza come istruzione di programma se e' numerata
     ' - la esegue immediatamente altrimenti
     Public Overrides Function ReadInputLine(inputText As String) As String
-        Dim hdr As String = chdr & ".ReadInputLine"
+        'Dim hdr As String = chdr & ".ReadInputLine"
         errorCode = ErrorId.NONE
         If String.IsNullOrEmpty(inputText) Then Return String.Empty
         inputText = inputText.ToUpper().Trim()
@@ -387,7 +395,7 @@ Public Class TiBasic
         ' memorizzazione linea
         pStr = EncodeCodeLine(pStr)
         Util.Info(hdr, "Storing line " & n.ToString())
-        If StoreCodeLine(n, pStr) = -1 Then Return SetError(ErrorId.BAD_LINE_NUMBER)
+        If StoreCodeLine(n, pStr) < 0 Then Return SetError(ErrorId.BAD_LINE_NUMBER)
 
         Return String.Empty
     End Function
@@ -456,9 +464,9 @@ Public Class TiBasic
             If fn IsNot Nothing Then
                 If fn.mandatoryArguments And args Is Nothing Then Return SetError(ErrorId.INCORRECT_STATEMENT)
                 If running Then
-                    If fn.isIstruction Then Return cmdSet.Exec(currentToken, args)
+                    If fn.IsIstruction Then Return cmdSet.Exec(currentToken, args)
                 Else
-                    If fn.isCommand Then Return cmdSet.Exec(currentToken, args)
+                    If fn.IsCommand Then Return cmdSet.Exec(currentToken, args)
                 End If
                 Return SetError(ErrorId.CANT_DO_THAT)
             End If
@@ -472,7 +480,7 @@ Public Class TiBasic
     End Function
 
     ' trova le keyword nella stringa e le sostituisce con i rispettivi token
-    Protected Function EncodeCodeLine(codeLine As String) As String
+    Public Overrides Function EncodeCodeLine(codeLine As String) As String
         If String.IsNullOrEmpty(codeLine) Then Return String.Empty
         Dim tokenStr As String
         Dim f As Funct
@@ -491,7 +499,7 @@ Public Class TiBasic
                     If f IsNot Nothing Then
                         tokenStr = GetTokenCodeStr(f.token)
                         codeLine = codeLine.Replace(f.keyword, tokenStr)
-                        If f.isCommand And Not f.isIstruction Then Exit Do
+                        If f.IsCommand And Not f.IsIstruction Then Exit Do
                         If f.token = IstrId.REMRK Or f.token = IstrId.DATA Then Exit Do
                         i += 1
                     End If
@@ -504,19 +512,21 @@ Public Class TiBasic
     End Function
 
     ' restituisce sequenza di codifica "token"
-    Public Function GetTokenCodeStr(tk As Integer) As String
-        Return TOKEN_PREFIX & ChrW(TOKEN_BASECODE + tk)
+    Public Function GetTokenCodeStr(tk As Byte) As String
+        Dim val As UInt16 = CUInt(tk) + TOKEN_BASECODE
+        If val > 255 Then Warn(chdr & "GetTokenCodeStr", "illegal value " & val.ToString())
+        Return Convert.ToString(TOKEN_PREFIX) & Convert.ToString(Chr(val))
     End Function
 
     ''' <summary>
-    ''' estrae codice token da sequenza di codifica che deve cominciare con TOKEN_PREFIX_CHAR
+    ''' estrae codice token da sequenza di codifica (lunga 2 caratteri) che deve cominciare con TOKEN_PREFIX_CHAR
     ''' </summary>
     ''' <param name="tkSeq">sequenza di codifica (2 caratteri)</param>
     ''' <returns></returns>
     Public Function ExtractTokenFromStr(ByRef tkSeq As String, Optional ByRef startIdx As Integer = 0) As Integer
-        'If String.IsNullOrEmpty(tkSeq) Then Return -1
+        If String.IsNullOrEmpty(tkSeq) Then Return -1
         If tkSeq.Chars(startIdx) <> TOKEN_PREFIX Then Return -1
-        Return AscW(tkSeq.Chars(startIdx + 1)) - TOKEN_BASECODE
+        Return Convert.ToByte((Asc(tkSeq.Chars(startIdx + 1)) - TOKEN_BASECODE) And 255)
     End Function
 
     ''' <summary>
@@ -748,7 +758,7 @@ Public Class TiBasic
     End Sub
 
     Protected Function CMD_New(params As String) As String
-        Init()
+        Start()
         Return String.Empty
     End Function
 
@@ -888,7 +898,7 @@ Public Class TiBasic
             Dim tk As Integer = ExtractTokenFromStr(parts.header)
             If tk >= 0 Then
                 Dim f As Funct = cmdSet.GetFunctionByToken(tk)
-                If Not f.isCommand And Not f.isIstruction Then ' si tratta di una funzione
+                If Not f.IsCommand And Not f.IsIstruction Then ' si tratta di una funzione
                     If parts.argn > 0 Then
                         If Not parts.argumentsInBrackets Then
                             SetError(ErrorId.INCORRECT_STATEMENT)
@@ -1037,23 +1047,6 @@ Public Class TiBasic
         Return var
     End Function
 
-    ' Converte array di variabili in array di valori interi.
-    ' Se almeno una variabile dell'array non e' numerica, restituisce nothing.
-    Protected Function GetIntegerArrayFromVars(ByRef vars As Variable()) As Integer()
-        If vars Is Nothing Then Return Nothing
-        Dim l As Integer = vars.Length
-        If l = 0 Then Return Nothing
-        Dim intVal(l - 1) As Integer
-        For i As Integer = 0 To l - 1
-            If Not vars(i).isNumeric() Then
-                'SetError(ErrorId.STR_NUM_MISMATCH)
-                Return Nothing
-            End If
-            intVal(i) = vars(i).GetInteger()
-        Next
-        Return intVal
-    End Function
-
     ''' <summary>
     ''' Esamina nome di variabile e individua il relativo tipo di dati tra STRNG e FLOAT.
     ''' Restituisce UNDEF in caso di stringa nulla o non valida (con caratteri illegali)
@@ -1104,6 +1097,15 @@ Public Class TiBasic
         'warningMsg = msg
         Return msg
     End Function
+
+    Public Sub ShowCharFont(ByRef firstRow As Integer)
+        If firstRow < 0 Then firstRow = 0
+        If firstRow > TiVideo.ROWS - 9 Then firstRow = TiVideo.ROWS - 9
+        For i As UInt16 = 0 To 255
+            machine.video.PutChar(firstRow + (i >> 5), i Mod 32, i, False)
+            machine.video.Invalidate()
+        Next
+    End Sub
 
 #Region "Commands"
     Protected Function CMD_Break(params As String) As String
@@ -1204,7 +1206,16 @@ Public Class TiBasic
             Dim strH As String = params.Substring(0, 3)
             If strH = "CS1" Or strH = "CS2" Then Return SetError(ErrorId.UNIMPLEMENTED)
             If strH = "DSK" Then
-                Return SetError(ErrorId.UNIMPLEMENTED)
+                Dim args As String() = params.Split("."c)
+                If args(0).Length > 4 Then Return SetError(ErrorId.IO)
+                Dim disknum As Integer
+                Try
+                    disknum = Convert.ToInt32(args(0).Substring(3))
+                Catch ex As Exception
+                    disknum = -1
+                End Try
+                If SaveProgram_Dsk(disknum, args(1)) Then Return Nothing ' successfull
+                Return SetError(ErrorId.IO, IOError.ToString())
             End If
         End If
         ' salvataggio file in formato ASCII
@@ -1236,17 +1247,21 @@ Public Class TiBasic
             If strH = "DSK" Then ' disk file
                 Dim args As String() = params.Split("."c)
                 If args(0).Length > 4 Then Return SetError(ErrorId.IO)
-                If LoadDiskFile(args(0), args(1)) Then
-                    Return Nothing ' successfull
-                Else
-                    Return SetError(ErrorId.IO, IOError.ToString())
-                End If
+                Dim disknum As Integer
+                Try
+                    disknum = Convert.ToInt32(args(0).Substring(3))
+                Catch ex As Exception
+                    disknum = -1
+                End Try
+                If LoadProgram_Dsk(disknum, args(1)) Then Return Nothing ' successfull
+                Return SetError(ErrorId.IO, IOError.ToString())
             End If
         End If
         If Not LoadProgram(params.ToUpper()) Then Return SetError(ErrorId.IO, IOError.ToString())
         Return Nothing
     End Function
 
+#Region "Files"
     Protected Function LoadProgram(ByRef fname As String) As Boolean
         Dim hdr As String = chdr & ".LoadProgram"
         Dim f As FileStream
@@ -1277,44 +1292,25 @@ Public Class TiBasic
         Return True
     End Function
 
-    Protected Function LoadDiskFile(ByRef subDir As String, ByRef fname As String) As Boolean
-        Dim hdr As String = chdr & ".LoadDiskFile"
-        Dim f As FileStream
-        Try
-            f = File.Open(My.Settings.workDir & "\" & subDir & "\" & fname, FileMode.Open)
-        Catch ex As Exception
-            Warn(hdr, ex.Message)
-            IOError = 56
-            Return False
-        End Try
+    Protected Function LoadProgram_Dsk(ByRef diskNumber As Integer, ByRef fname As String) As Boolean
+        Dim hdr As String = chdr & ".LoadProgram_Dsk"
+        Dim prg As Byte() = TiFiles.LoadProgram(diskNumber, fname)
+        If prg Is Nothing Then Return False
 
-        Dim listNumberTableEnd, listNumberTableStart, statementTableEnd As UInt16
-        Dim b As Byte
-        Dim offset As Integer = &H81
-        Dim br As New BinaryReader(f)
-        Try
-            ' lettura puntatori
-            f.Seek(offset, SeekOrigin.Begin)
-            b = f.ReadByte() ' what's the meaning of it ?
-            'listNumberTableEnd = br.ReadUInt16()
-            'listNumberTableStart = br.ReadUInt16()
-            'statementTableEnd = br.ReadUInt16()
-            listNumberTableEnd = readFileWord(f)
-            listNumberTableStart = readFileWord(f)
-            statementTableEnd = readFileWord(f)
-            offset += 7 ' list-number table start
-        Catch ex As Exception
-            Warn(hdr, ex.Message)
-            IOError = 56
-            Return False
-        End Try
+        Dim h As ProgramFileHeader
 
-        Dim lineNumberTableSize As Integer = listNumberTableEnd - listNumberTableStart + 1
-        Dim statementListSize As Integer = statementTableEnd - listNumberTableEnd
-        Dim linesCount As Integer = lineNumberTableSize >> 2
-        Dim ln, ll As Integer ' line number, code line length
+        ' lettura puntatori
+        h.chkWord = GetWordFromBytes(prg, 0)
+        h.lineNumTable_End = GetWordFromBytes(prg, 2)
+        h.lineNumTable_Start = GetWordFromBytes(prg, 4)
+        h.programLines_End = GetWordFromBytes(prg, 6)
+
+        Dim lineNumberTableSize As UInt16 = h.lineNumTable_End - h.lineNumTable_Start + 1
+        Dim statementListSize As UInt16 = h.programLines_End - h.lineNumTable_End
+        Dim linesCount As UInt16 = lineNumberTableSize >> 2
+        Dim lineNum As Integer ' line number, code line length
         Dim ptr As UInt16
-        Dim codeBytes As Byte()
+        'Dim codeBytes As Byte()
         Dim lineOfCode As String
 
         ' cancellazione memoria
@@ -1322,87 +1318,173 @@ Public Class TiBasic
         ClearVariables()
 
         'lettura linee di codice
+        Dim i As Integer
         For n = 0 To linesCount - 1
             ' lettura numero di linea e puntatore a codice
-            f.Seek(offset + n * 4, SeekOrigin.Begin)
-            'ln = br.ReadUInt16()
-            'ptr = br.ReadUInt16() - listNumberTableEnd
-            ln = readFileWord(f)
-            ptr = readFileWord(f) - listNumberTableStart - 1
-
-            ' lettura codice linea
-            f.Seek(offset + ptr, SeekOrigin.Begin)
-            ll = f.ReadByte() - 1
-            codeBytes = br.ReadBytes(ll)
-            lineOfCode = CreateLineCodeFromFileBytes(codeBytes)
-            lineOfCode = EncodeCodeLine(lineOfCode)
-            If Not code.AddLine(ln, lineOfCode) Then
-                Warn(hdr, "can't store line " & ln.ToString() & " " & lineOfCode)
+            i = 8 + n * 4
+            lineNum = GetWordFromBytes(prg, i)
+            ptr = GetWordFromBytes(prg, i + 2)
+            lineOfCode = CreateCodeLineFromFileBytes(prg, ptr - h.lineNumTable_Start + 8)
+            If lineOfCode Is Nothing Then
+                Warn(hdr, "can't read code of line " & lineNum.ToString())
+            ElseIf lineOfCode.Chars(0) = "*" Then
+                Warn(hdr, "illegal token in line " & lineNum.ToString())
+                lineOfCode = lineOfCode.Substring(1)
+            End If
+            If Not code.AddLine(lineNum, lineOfCode) Then
+                Warn(hdr, "can't store line " & lineNum.ToString() & " " & lineOfCode)
             End If
         Next
 
         Return True
     End Function
 
-    Protected Function readFileWord(ByRef f As FileStream) As UInt16
-        Dim b0, b1 As UInt16
-        b0 = f.ReadByte()
-        b1 = f.ReadByte()
-        Return b0 * 256 + b1
+    Protected Function SaveProgram_Dsk(ByRef diskNumber As Integer, ByRef fname As String,
+                                       Optional ByRef memoryTop As UInt16 = &H37D7,
+                                       Optional ByRef protection As Boolean = False) As Boolean
+        Dim hdr As String = chdr & ".SaveProgram_Dsk"
+
+        ' prepare the program content
+        Dim prgBody As New MemoryStream()
+        Dim linePosition(code.LinesCount()) As Integer
+        Dim cl As CodeLine = code.GetFirstLine()
+        Dim i As UInt32 = 0
+        Do
+            linePosition(i) = prgBody.Position
+            WriteFileBytesFromCodeLine(prgBody, cl.content)
+            cl = cl.nextLine
+            i += 1
+        Loop Until cl Is Nothing
+
+        ' get sizes
+        Dim prgBodySize As Integer = prgBody.Position - 1
+        Dim lineNumberTableSize As Integer = code.LinesCount() * 4
+        Dim prgSize As Integer = 8 + lineNumberTableSize + prgBodySize
+        If memoryTop < prgSize Then ' program too large!
+            'TODO
+            Err(hdr, "program too large")
+            errorCode = ErrorId.MEMORY_FULL
+            Return False
+        End If
+
+        ' prepare the line number table 
+        Dim prgBodyBegin As UInt32 = memoryTop - prgBodySize
+        Dim lineNumberTable(lineNumberTableSize) As Byte
+        Dim lnum, lptr As UInt16
+        i = 0
+        cl = code.GetFirstLine()
+        Do
+            lnum = cl.number
+            lptr = prgBodyBegin + linePosition(i >> 2)
+            lineNumberTable(i) = GetHighByte(lnum)
+            lineNumberTable(i + 1) = GetLowByte(lnum)
+            lineNumberTable(i + 2) = GetHighByte(lptr + 1)
+            lineNumberTable(i + 3) = GetLowByte(lptr + 1)
+            cl = cl.nextLine
+            i += 4
+        Loop Until cl Is Nothing
+
+        ' define header values
+        Dim lineNumberTableBegin As UInt32 = prgBodyBegin - lineNumberTableSize
+        Dim lineNumberTableEnd As UInt32 = prgBodyBegin - 1
+        Dim magicValue As UInt16 = Convert.ToUInt16(lineNumberTableBegin Xor lineNumberTableEnd)
+        If protection Then magicValue = Not magicValue
+
+        ' put parts together
+        Dim prg(prgSize) As Byte
+        prg(0) = GetHighByte(magicValue)
+        prg(1) = GetLowByte(magicValue)
+        prg(2) = GetHighByte(lineNumberTableEnd)
+        prg(3) = GetLowByte(lineNumberTableEnd)
+        prg(4) = GetHighByte(lineNumberTableBegin)
+        prg(5) = GetLowByte(lineNumberTableBegin)
+        prg(6) = GetHighByte(memoryTop)
+        prg(7) = GetLowByte(memoryTop)
+        Array.Copy(lineNumberTable, 0, prg, 8, lineNumberTableSize)
+        prgBody.Position = 0
+        For i = 8 + lineNumberTableSize To prgSize - 1
+            prg(i) = prgBody.ReadByte()
+        Next
+
+        prgBody.Dispose()
+        Return TiFiles.SaveProgram(diskNumber, fname, prg)
     End Function
 
-    Protected Function CreateLineCodeFromFileBytes(ByRef bytes As Byte()) As String
+    ' if byte sequence contains an illegal token, the return string will have prefix "*"
+    Protected Function CreateCodeLineFromFileBytes(ByRef bytes As Byte(), Optional ByRef ptr As Integer = 0) As String
         Dim hdr = chdr & ".GetLineCodeFromFileBytes"
         Dim st As String
         Dim res As String = ""
         Dim b As Byte
-        Dim ptr As Integer = 0
-        Dim ln As Integer = bytes.Count()
+        Dim ln As Integer = bytes.Length
         Dim i, l As Integer
+        Dim illegalToken As Boolean = False
 
         If ln = 0 Then
-            Warn(hdr, "no bytes passed")
+            Warn(hdr, "empty bytes buffer passed")
             Return Nothing
         End If
 
         Do
             b = bytes(ptr)
-            If b > &H80 Then ' token
+            If b = 0 Then
+                ptr = 0
+                Exit Do ' end of line
+            End If
+            If b >= &H80 Then ' token
                 Select Case b
                     Case &HC7 ' quoted string
                         l = bytes(ptr + 1)
                         st = ""
                         For i = 1 To l
-                            st &= Chr(bytes(ptr + i + 1))
+                            st &= ChrW(bytes(ptr + i + 1))
                         Next
                         ptr += l + 2
                         res &= Chr(34) & st & Chr(34)
                     Case &HC8 ' unquoted string
                         l = bytes(ptr + 1)
                         For i = 1 To l
-                            res &= Chr(bytes(ptr + i + 1))
+                            res &= ChrW(bytes(ptr + i + 1))
                         Next
                         ptr += l + 2
                     Case &HC9 ' line number
                         l = bytes(ptr + 1) * 256 + bytes(ptr + 2)
                         ptr += 3
                         res &= l.ToString()
-                    Case Else
+                    Case Else ' token byte
                         If b >= &HB3 And b <= &HC5 Then ' 1 char keyword
                             If auxTokens.ContainsValue(b) Then
-                                For Each c As Char In auxTokens.Keys
-                                    If auxTokens.GetValueOrDefault(c) = b Then
-                                        res &= c
-                                        ptr += 1
+                                'For Each c As Char In auxTokens.Keys
+                                '    If auxTokens.GetValueOrDefault(c) = b Then
+                                '        res &= c
+                                '        Exit For
+                                '    End If
+                                'Next
+                                For Each vp As KeyValuePair(Of Char, Integer) In auxTokens
+                                    If vp.Value = b Then
+                                        res &= vp.Key
                                         Exit For
                                     End If
                                 Next
                             Else
                                 Warn(hdr, "can't convert token h" & Hex(b))
+                                res &= Chr(b)
                             End If
+                            ptr += 1
                         Else ' normal keyword
-                            st = cmdSet.GetSpacedKeywordByToken(b)
-                            If Not String.IsNullOrEmpty(st) Then res &= st
+                            Dim f As Funct = cmdSet.GetFunctionByToken(b)
+                            If f Is Nothing Then '  illegal token
+                                Warn(hdr, "illegal token " & b.ToString() & " at position " & ptr.ToString())
+                                illegalToken = True
+                                res &= Chr(b)
+                            Else
+                                If f.IsFunction() Then
+                                    st = GetTokenCodeStr(b)
+                                Else
+                                    st = " " & GetTokenCodeStr(b) & " " ' space padding
+                                End If
+                                res &= st
+                            End If
                             ptr += 1
                         End If
                 End Select
@@ -1412,8 +1494,183 @@ Public Class TiBasic
             End If
         Loop While ptr < ln
 
+        If illegalToken Then res = "*" & res
+        If ptr > 0 Then Warn(hdr, "unexpected end of file")
+        If res.Length = 0 Then Warn(hdr, "empty string result")
         Return res.Trim()
     End Function
+
+    Protected Function WriteFileBytesFromCodeLine(ByRef f As MemoryStream, ByRef codeLine As String) As Boolean
+        Dim hdr As String = chdr & ".WriteFileBytesFromCodeLine"
+        Dim startPos As Long = f.Position
+        Dim ch As Char
+        Dim b As Byte
+        Dim prevToken As Integer = -1
+        Dim err As Boolean = False
+        Dim i As Integer = 0
+        Dim j As Integer
+
+        If String.IsNullOrEmpty(codeLine) Then
+            Util.Err(hdr, "empty code line")
+            Return False
+        End If
+
+        Info(hdr, "parsing line: " & codeLine)
+        f.WriteByte(0) ' line size: will be defined later
+        Do
+            ch = codeLine.Chars(i)
+            b = Convert.ToByte(ch)
+            i += 1
+
+            If ch = """"c Then ' QUOTED STRING
+                If i = codeLine.Length - 1 Then ' quotes as last char
+                    f.WriteByte(34)
+                    Warn(hdr, "opening quotes at end of encoded line " & codeLine)
+                    err = True
+                    Exit Do
+                Else ' normal case
+                    f.WriteByte(&HC7) ' quoted string token
+                    j = codeLine.IndexOf(""""c, i)
+                    If j = -1 Then
+                        err = True
+                        j = codeLine.Length
+                        Warn(hdr, "missing closing quotes in line " & codeLine)
+                    End If
+                    f.WriteByte(j - i) ' quoted string length
+                    Info(hdr, "- quoted string: " & codeLine.Substring(i, j - i))
+                    While i < j
+                        f.WriteByte(Convert.ToByte(codeLine.Chars(i)))
+                        i += 1
+                    End While
+                    i += 1
+                    prevToken = -1
+                End If
+                Continue Do
+            End If
+
+            If b = 32 Then
+                Info(hdr, "- space (ignored)")
+                Continue Do ' space
+            End If
+
+            If auxTokens.ContainsKey(ch) Then
+                b = auxTokens.GetValueOrDefault(ch)
+                f.WriteByte(b)
+                Info(hdr, "- 1-char token " & b.ToString() & " for '" & ch & "'")
+                prevToken = -1
+                Continue Do
+            ElseIf ch = TOKEN_PREFIX Then ' TOKEN for >1 chars keyword
+                If i >= codeLine.Length Then ' token prefix as last char = not converted
+                    Info(hdr, "- token prefix '" & TOKEN_PREFIX & "' as last char (not converted)")
+                    f.WriteByte(Convert.ToByte(TOKEN_PREFIX))
+                    Exit Do
+                Else ' normal condition
+                    ch = codeLine.Chars(i)
+                    i += 1
+                    'b = Convert.ToByte(ch)
+                    b = Asc(ch)
+                    b -= TOKEN_BASECODE ' token
+                    f.WriteByte(b)
+                    If cmdSet.ContainsToken(b) Then
+                        Info(hdr, "- token " & b.ToString() & " ('" & cmdSet.GetKeywordByToken(b) & "')")
+                        Dim withLineNumber As Boolean = False
+                        If b = IstrId.GO_TO Or b = IstrId.GO_SUB Or b = IstrId._THEN Or b = IstrId._ELSE Then
+                            withLineNumber = True
+                        ElseIf b = IstrId._TO Or b = IstrId._SUB Then
+                            If prevToken = IstrId.GO Then withLineNumber = True
+                        ElseIf b = IstrId.RESTORE Then
+                            If i < codeLine.Length Then withLineNumber = True
+                        End If
+                        If withLineNumber Then
+                            f.WriteByte(&HC9)
+                            Dim n As UInt32 = Parser.ExtractUIntegerFromString(codeLine, i) ' increments i
+                            Info(hdr, "- line number " & n.ToString())
+                            If n < 1 Or n > MAX_LINE_NUMBER Then
+                                Warn(hdr, "illegal reference line number in line " & codeLine)
+                                f.WriteByte(0)
+                                f.WriteByte(0)
+                                err = True
+                            End If
+                            f.WriteByte(Convert.ToByte((n And &HFF00) >> 8))
+                            f.WriteByte(Convert.ToByte(n And &HFF))
+                        End If
+                    Else ' illegal token!
+                        Warn(hdr, "illegal token " & b.ToString & " @" & (i - 1).ToString & " in line " & codeLine)
+                        err = True
+                    End If
+                    prevToken = b
+                End If
+                Continue Do
+            End If
+
+            ' UNQUOTED STRING
+            j = Parser.GetNumericStringLength(codeLine, i - 1)
+            If j > 0 Then ' numeric constant
+                Info(hdr, "- unquoted string: numeric: " & codeLine.Substring(i - 1, j) & " (" & j.ToString() & ")")
+                f.WriteByte(&HC8) ' unquoted string token
+                f.WriteByte(j) ' string length
+                f.WriteByte(b)
+                j += i - 1
+                While i < j
+                    f.WriteByte(Convert.ToByte(codeLine.Chars(i)))
+                    i += 1
+                End While
+                prevToken = -1
+                Continue Do
+            ElseIf prevToken = IstrId._CALL Then ' call-routine name
+                f.WriteByte(&HC8) ' unquoted string token
+                i -= 1
+                j = i ' first char position
+                While j < codeLine.Length And b <> &HB7 And b <> 32
+                    b = Convert.ToByte(codeLine.Chars(j))
+                    j += 1
+                End While
+                Dim l As Integer = j - i
+                Info(hdr, "- unquoted string: funciton name: " & codeLine.Substring(i, l) & " (" & l.ToString() & ")")
+                f.WriteByte(l) ' string length
+                While i < j
+                    f.WriteByte(Convert.ToByte(codeLine.Chars(i)))
+                    i += 1
+                End While
+                prevToken = -1
+                Continue Do
+            End If
+
+            ' VARIABLE NAMES (not encoded)
+            'f.WriteByte(b)
+            j = 0 ' var name length
+            While VAR_ADMITTED_CHARS.Contains(ch)
+                f.WriteByte(Convert.ToByte(ch))
+                j += 1
+                If i = codeLine.Length Then
+                    i += 1
+                    Exit While
+                End If
+                ch = codeLine.Chars(i)
+                i += 1
+            End While
+            If j > 0 Then
+                i -= 1
+                Info(hdr, "- var name (not encoded): " & codeLine.Substring(i - j, j) & " (" & j.ToString() & ")")
+            Else
+                Warn(hdr, "unrecognized char '" & ch & "' ignored")
+                err = True
+            End If
+            prevToken = -1
+
+        Loop Until i >= codeLine.Length
+
+        ' update line size byte
+        i = f.Position
+        f.Seek(startPos, SeekOrigin.Begin)
+        f.WriteByte(Convert.ToByte(i - startPos))
+        f.Seek(i, SeekOrigin.Begin)
+        f.WriteByte(0) ' EOL
+
+        Return Not err
+    End Function
+
+#End Region
 
     Protected Function CMD_Test(params As String) As String
         Dim i As Integer
@@ -1431,15 +1688,16 @@ Public Class TiBasic
 
         cnsl.NewLine()
         Select Case cmd
-            Case "LST" ' esegue list con tokens
-                If code.IsEmpty() Then Return SetError(ErrorId.CANT_DO_THAT)
-                Dim ln As CodeLine = code.GetFirstLine()
-                Do
-                    'consl.PrintLn(ln.GetComplete())
-                    cnsl.PrintLn(ln.number.ToString & " " & GetRawCodeLine(ln.content))
-                    ln = ln.nextLine
-                Loop Until ln Is Nothing
-                cnsl.PrintLn(DBGMSG_PREFIX & code.LinesCount() & " LINES")
+            Case "LIST" ' esegue list con tokens
+                If Not code.IsEmpty() Then
+                    Dim ln As CodeLine = code.GetFirstLine()
+                    Do
+                        'consl.PrintLn(ln.GetComplete())
+                        cnsl.PrintLn(ln.number.ToString & " " & GetRawCodeLine(ln.content))
+                        ln = ln.nextLine
+                    Loop Until ln Is Nothing
+                End If
+                cnsl.PrintLn("-- " & code.LinesCount() & " LINES")
             Case "VARS" ' elenco delle variabili definite e relativi valori
                 If variables.Count > 0 Then
                     Dim vlist As List(Of String) = variables.GetDescrList()
@@ -1457,9 +1715,12 @@ Public Class TiBasic
                                     machine.video.GetGroupBackColor(i).ToString)
                 Next
             Case "VER"
-                cnsl.PrintLn("SOFTWARE VERSION: 0.0")
+                cnsl.PrintLn("FAKETI by Fabrizio Volpi")
+                cnsl.PrintLn("fabvolpi@gmail.com")
+                cnsl.PrintLn("Version: 0.0")
             Case "FONT"
-                machine.video.ShowFont(2)
+                'machine.video.ShowActiveFontBitmap(10)
+                ShowCharFont(10)
             Case "BEEP"
                 If argn > 0 Then
                     Try
@@ -1476,7 +1737,7 @@ Public Class TiBasic
                 For i = 1 To 100
                     machine.video.PutChar(rnd.Next(TiVideo.ROWS), rnd.Next(TiVideo.COLS), Convert.ToByte(32 + rnd.Next(96)))
                 Next
-            Case "SWBMP"
+            Case "SWCS"
                 cnsl.Print("Switched to ")
                 If machine.video.IsAltCharSetActive() Then
                     machine.video.SetScreenColor(TiVideo.DEF_BACKCOLOR)
@@ -1488,17 +1749,40 @@ Public Class TiBasic
                     cnsl.Print("runtime ")
                 End If
                 cnsl.PrintLn("char bitmap")
+            Case "BRK"
+                cnsl.PrintLn("Active breakpoints:")
+                If code.IsEmpty() Then
+                    cnsl.PrintLn("NONE (empty program!)")
+                    Return String.Empty
+                End If
+                Dim cl As CodeLine = code.GetFirstLine()
+                i = 0
+                Do
+                    If cl.breakpoint Then
+                        If i > 0 Then cnsl.Print(",")
+                        cnsl.Print(cl.number.ToString)
+                        i += 1
+                    End If
+                    cl = cl.nextLine
+                Loop Until cl Is Nothing
+                If i = 0 Then
+                    cnsl.PrintLn("NO breakpoints.")
+                Else
+                    cnsl.NewLine()
+                    cnsl.PrintLn("Total: " & i.ToString & " breakpoints.")
+                End If
             Case Else
                 cnsl.PrintLn("ADD AN ARGUMENT:")
                 cnsl.PrintLn("---------------")
-                cnsl.PrintLn("LST show encoded program")
+                cnsl.PrintLn("LIST  show encoded program")
                 cnsl.PrintLn("VARS show defined variables")
-                cnsl.PrintLn("VER show software version")
+                cnsl.PrintLn("BRK  show breakpoints")
+                cnsl.PrintLn("VER  show software version")
                 cnsl.PrintLn("COLR print active colors")
                 cnsl.PrintLn("FONT show char font&colors")
                 cnsl.PrintLn("CHRS show random chars")
                 cnsl.PrintLn("BEEP [freq] generate tone")
-                cnsl.PrintLn("SWBMP switch char bitmaps")
+                cnsl.PrintLn("SWCS switch char bitmaps")
         End Select
         Return String.Empty
     End Function
@@ -1508,77 +1792,6 @@ Public Class TiBasic
 
     Private Function ISTR_Let(codeStr As String) As String
         Dim hdr = chdr & ".ISTR_Let"
-        'Dim destVar As Variable
-
-        '' controlli
-        'If String.IsNullOrEmpty(codeStr) Then
-        '    Warn(hdr, "empty assignment string")
-        '    Return String.Empty ' no operation
-        'End If
-        'codeStr = codeStr.Replace(" ", String.Empty)
-        'Dim l As Integer = codeStr.Length()
-        'Dim ei As Integer = codeStr.IndexOf("=")
-        'If ei = 0 Then
-        '    Info(hdr, "missing variable name")
-        '    Return SetError(ErrorId.INCORRECT_STATEMENT)
-        'End If
-        'If ei = l - 1 Then
-        '    Info(hdr, "missing expression")
-        '    Return SetError(ErrorId.INCORRECT_STATEMENT)
-        'End If
-
-        '' lettura espressione dx
-        'Dim rightStr As String = codeStr.Substring(ei + 1)
-        'Dim exprVal As Variable = EvalExpression(rightStr)
-        'If exprVal Is Nothing Then Return GetErrorMessage()
-
-        '' lettura nome variabile
-        'Dim leftStr As String = codeStr.Substring(0, ei)
-        'Dim varName As String
-        'Dim isMatrix As Boolean
-        'Dim ha As HeaderAndArguments = Parser.GetHeaderAndArguments(leftStr)
-        'If ha.argn = 0 And Not ha.argumentsInBrackets Then ' variabile semplice
-        '    varName = leftStr
-        '    isMatrix = False
-        'ElseIf ha.argumentsInBrackets And ha.argn > 0 Then ' variabile di matrice
-        '    isMatrix = True
-        '    varName = ha.header
-        'Else
-        '    Return SetError(ErrorId.INCORRECT_STATEMENT)
-        'End If
-        'Dim varTypeByName As VarType = GetVarTypeFromName(varName)
-        'If varTypeByName = VarType.UNDEF Then
-        '    Info(hdr, "bad variable name " & varName)
-        '    Return SetError(ErrorId.BAD_NAME)
-        'End If
-        'If exprVal.type <> varTypeByName Then Return SetError(ErrorId.STR_NUM_MISMATCH)
-
-        '' assegnazione valore a variabile
-        'If isMatrix Then ' variabile di matrice
-        '    Dim idxv As Variable() = EvalMultipleExpression(ha.args)
-        '    If errorCode Then Return Nothing ' indici scorretti
-        '    Dim idxi As Integer() = GetIntegerArrayFromVars(idxv)
-        '    If idxi Is Nothing Then Return GetErrorMessage() ' indici non numerici
-        '    destVar = CheckArrayAccess(varName, idxi)
-        '    If errorCode Then Return GetErrorMessage()
-        '    If Not destVar.SetArrayVar(idxi, exprVal) Then
-        '        Err(hdr, "can't set array variable " & varName & " @ " & idxi.ToString)
-        '        Return SetError(ErrorId.SIMULATOR_ERROR)
-        '    End If
-        'Else ' variabile semplice
-        '    destVar = variables.GetVariable(varName)
-        '    If destVar IsNot Nothing Then ' variabile gia' definita: aggiornamento ---
-        '        If destVar.type <> exprVal.type Then ' non corrispondenza di tipo
-        '            Return SetError(ErrorId.STR_NUM_MISMATCH)
-        '        End If
-        '    Else ' creazione nuova variabile ---
-        '        destVar = New Variable(varName, exprVal.type)
-        '        variables.Add(destVar)
-        '    End If
-        '    destVar.value = exprVal.value
-        'End If
-
-        'Return String.Empty
 
         ' controlli
         If String.IsNullOrEmpty(codeStr) Then
@@ -1598,8 +1811,8 @@ Public Class TiBasic
         End If
 
         Dim vName As String = codeStr.Substring(0, ei).Trim()
-        Dim vValue As String = codeStr.Substring(ei + 1).Trim()
-        Dim err As Integer = SetVariable(vName, vValue)
+        Dim vExpr As String = codeStr.Substring(ei + 1).Trim()
+        Dim err As Integer = SetVariable(vName, vExpr)
         If err Then Return SetError(err)
         Return String.Empty
     End Function
@@ -1661,14 +1874,16 @@ Public Class TiBasic
         Return ErrorId.NONE
     End Function
 
-    Protected Function ISTR_NoOp(params As String) As String
+    Protected Shared Function ISTR_NoOp(params As String) As String
         Return String.Empty 'do nothing
     End Function
 
     Protected Function ISTR_Print(params As String) As String
-        If params.Chars(0) = "#"c Then
-            If currentToken = IstrId.DISPLAY Then Return SetError(ErrorId.INCORRECT_STATEMENT)
-            ' TODO...
+        If Not String.IsNullOrEmpty(params) Then
+            If params.Chars(0) = "#"c Then
+                If currentToken = IstrId.DISPLAY Then Return SetError(ErrorId.INCORRECT_STATEMENT)
+                ' TODO...
+            End If
         End If
         Return PrintOnScreen(params)
     End Function
@@ -1721,7 +1936,7 @@ Public Class TiBasic
             If i < prList.Length - 1 Then prList = prList.Substring(i + 1) Else Exit Do
         Loop While prList.Length > 0
 
-        If finalNewLine Then cnsl.NewLine()
+        If finalNewLine And cnsl.GetCursorPosition() > 0 Then cnsl.NewLine()
         printIstrEval = False
         Return String.Empty
     End Function
@@ -1943,7 +2158,7 @@ Public Class TiBasic
 
         ' ricerca argomenti intorno a "TO"
         Dim toStr As String = GetTokenCodeStr(IstrId._TO)
-        If params.IndexOf(toStr) = -1 Then Return SetError(ErrorId.INCORRECT_STATEMENT)
+        If Not params.Contains(toStr) Then Return SetError(ErrorId.INCORRECT_STATEMENT)
         Dim args As String() = params.Split(toStr, StringSplitOptions.TrimEntries)
         If args.Length <> 2 Then Return SetError(ErrorId.INCORRECT_STATEMENT)
 
@@ -2132,13 +2347,13 @@ Public Class TiBasic
             cnsl.NewLine()
 
             value_list = inputStr.Split(",")
-            If value_list.Count <> var_list.Count Then
+            If value_list.Length <> var_list.Length Then
                 inpErr = True
             Else
                 ' variables assignment
                 Dim v As Variable
                 Dim vt As VarType
-                For i = 0 To var_list.Count - 1
+                For i = 0 To var_list.Length - 1
                     v = variables.GetVariable(var_list(i))
                     If v Is Nothing Then
                         vt = GetVarTypeFromName(var_list(i))
@@ -2162,7 +2377,7 @@ Public Class TiBasic
                         v.value = New String(value_list(i))
                     End If
                 Next
-                If i = var_list.Count And Not inpErr Then Exit Do
+                If i = var_list.Length And Not inpErr Then Exit Do
             End If
             If inpErr Then
                 SetWarning(WarnId.INPUT_ERROR)
@@ -2259,18 +2474,20 @@ Public Class TiBasic
                     For i = 0 To 7
                         bytes(i) = (nybbles(i * 2) << 4) + nybbles(i * 2 + 1)
                     Next
-                    machine.video.SetCharShape(v1, bytes, True)
+                    machine.video.SetCharShape(Convert.ToByte(v1), bytes, True)
                     'If Not running Then machine.video.RestoreDefaultCharShapes(True)
                 Case "SOUND"
                     If .argn < 3 Or .argn > 9 Then Return SetError(ErrorId.INCORRECT_STATEMENT)
-                    If Not .onlyNumericArguments Then Return SetError(ErrorId.STR_NUM_MISMATCH)
+                    'If Not .onlyNumericArguments Then Return SetError(ErrorId.STR_NUM_MISMATCH)
                     Dim dur As Integer = args(0).GetInteger()
-                    If dur < TiSound.MIN_TIME Or dur > TiSound.MAX_TIME Then Return SetError(ErrorId.BAD_VALUE)
-                    Dim vParams((.argn - 2) >> 1) As VoiceParameters
+                    Dim d As Integer = dur
+                    If d < 0 Then d = -d
+                    If d < TiSound.MIN_TIME Or d > TiSound.MAX_TIME Then Return SetError(ErrorId.BAD_VALUE)
+                    Dim vParams((.argn - 2) >> 1) As VoiceParameter
                     Dim n As Integer = 0
                     i = 1
                     Do ' legge coppie di parametri [frequenza, volume]
-                        vParams(n).frerquency = args(i).GetInteger()
+                        vParams(n).frequency = args(i).GetInteger()
                         i += 1
                         If i = .argn Then Return SetError(ErrorId.INCORRECT_STATEMENT) ' missing volume
                         vParams(n).volume = args(i).GetInteger()
@@ -2294,6 +2511,8 @@ Public Class TiBasic
                 Case "JOYST"
                     ' TODO
                     SetWarning(WarnId.UNIMPLEMENTED)
+                Case Else
+                    Return SetError(ErrorId.INCORRECT_STATEMENT)
             End Select
         End With
         Return Nothing
@@ -2342,7 +2561,7 @@ Public Class TiBasic
         lastKey = key
     End Sub
 
-    Protected Sub Call_Sound(ByRef duration As Integer, ByRef params As VoiceParameters())
+    Protected Sub Call_Sound(ByRef duration As Integer, ByRef params As VoiceParameter())
         Dim vCount As Integer = 1 + ((params.Length - 1) >> 1)
         If vCount < 1 Then Return
         Dim waitSoundEnd As Boolean = True
@@ -2354,15 +2573,15 @@ Public Class TiBasic
         End If
         refFreq = 5 ' default value for noise frequency
         For i = 0 To vCount - 1
-            freq = params(i).frerquency
+            freq = params(i).frequency
             If i = 2 Then refFreq = freq
             If freq < 0 Then
                 If freq < -4 Then ' values -1, -2, -3, -4
-                    wForm = WaveForm.Triangular
-                    If freq = -4 Then freq = refFreq Else freq = 233 * (4 + freq)
+                    wForm = WaveForm.TRI
+                    If freq = -4 Then freq = refFreq Else freq = 233 * (5 + freq)
                 ElseIf freq < -8 Then ' values -5, -6, -7, -8
-                    wForm = WaveForm.Noise
-                    If freq = -8 Then freq = refFreq Else freq = 233 * (8 + freq)
+                    wForm = WaveForm.NOISE
+                    If freq = -8 Then freq = refFreq Else freq = 233 * (9 + freq)
                 Else ' other negative values
                     SetError(ErrorId.BAD_VALUE)
                     Return
@@ -2372,15 +2591,17 @@ Public Class TiBasic
                     SetError(ErrorId.BAD_VALUE)
                     Return
                 End If
-                wForm = WaveForm.Triangular
+                wForm = WaveForm.TRI
             End If
-            machine.sound.PlayTone(i, wForm, params(i).frerquency, duration, params(i).volume)
+            machine.sound.PlayTone(i, wForm, freq, duration, params(i).volume)
         Next
         If waitSoundEnd Then Threading.Thread.Sleep(duration)
     End Sub
 
     Protected Sub Call_HChar(row As Integer, col As Integer, chr As Byte, Optional rep As Integer = 1)
         Dim i As Integer = 0
+        row -= 1
+        col -= 1
         While i < rep
             machine.video.PutChar(row, col, chr)
             col += 1
@@ -2396,6 +2617,8 @@ Public Class TiBasic
 
     Protected Sub Call_VChar(row As Integer, col As Integer, chr As Byte, Optional rep As Integer = 1)
         Dim i As Integer = 0
+        row -= 1
+        col -= 1
         While i < rep
             machine.video.PutChar(row, col, chr)
             row += 1
@@ -2422,6 +2645,10 @@ Public Class TiBasic
     Protected Function OPER_Division(arg1 As Variable, arg2 As Variable) As Variable
         Dim v1 As Double = Convert.ToDouble(arg1.value)
         Dim v2 As Double = Convert.ToDouble(arg2.value)
+        If v2 = 0.0 Then
+            SetError(WarnId.NUMBER_TOO_BIG)
+            Return New Variable(MAX_FLOAT)
+        End If
         Return New Variable(v1 / v2)
     End Function
 
@@ -2458,7 +2685,7 @@ Public Class TiBasic
             Dim v2 As Double = Convert.ToDouble(arg2.value)
             If v1 = v2 Then rval = -1
         End If
-        Return New Variable(VarType.FLOAT, rval)
+        Return New Variable(rval)
     End Function
 
     Protected Function OPER_DiffersFrom(arg1 As Variable, arg2 As Variable) As Variable
@@ -2476,7 +2703,7 @@ Public Class TiBasic
                 SetError(ErrorId.STR_NUM_MISMATCH)
                 Return Nothing
         End Select
-        Return New Variable(VarType.FLOAT, rval)
+        Return New Variable(rval)
     End Function
 
     Protected Function OPER_LessThan(arg1 As Variable, arg2 As Variable) As Variable
@@ -2495,7 +2722,7 @@ Public Class TiBasic
                 Return Nothing
         End Select
         'Return New Variable(VarType.INTGR, rval)
-        Return New Variable(VarType.FLOAT, rval)
+        Return New Variable(rval)
     End Function
 
     Protected Function OPER_MoreThan(arg1 As Variable, arg2 As Variable) As Variable
@@ -2513,7 +2740,7 @@ Public Class TiBasic
                 SetError(ErrorId.STR_NUM_MISMATCH)
                 Return Nothing
         End Select
-        Return New Variable(VarType.FLOAT, rval)
+        Return New Variable(rval)
     End Function
 
     Protected Function OPER_LessOrEqualThan(arg1 As Variable, arg2 As Variable) As Variable
@@ -2531,7 +2758,7 @@ Public Class TiBasic
                 SetError(ErrorId.STR_NUM_MISMATCH)
                 Return Nothing
         End Select
-        Return New Variable(VarType.FLOAT, rval)
+        Return New Variable(rval)
     End Function
 
     Protected Function OPER_MoreOrEqualThan(arg1 As Variable, arg2 As Variable) As Variable
@@ -2549,13 +2776,13 @@ Public Class TiBasic
                 SetError(ErrorId.STR_NUM_MISMATCH)
                 Return Nothing
         End Select
-        Return New Variable(VarType.FLOAT, rval)
+        Return New Variable(rval)
     End Function
 
     Protected Function OPER_Concat(arg1 As Variable, arg2 As Variable) As Variable
         Dim s1 As String = CType(arg1.value, String)
         Dim s2 As String = CType(arg2.value, String)
-        Return New Variable(VarType.STRNG, s1 & s2)
+        Return New Variable(s1 & s2)
     End Function
 
 #End Region
@@ -2666,6 +2893,7 @@ Public Class TiBasic
         Dim v As Variable = EvalExpression(arg)
         If errorCode Then Return GetErrorMessage()
         If v.type = VarType.STRNG Then Return SetError(ErrorId.STR_NUM_MISMATCH)
+        If v.GetDouble() = 0.0 Then Return SetError(ErrorId.BAD_VALUE)
         v.value = Math.Log(v.GetDouble())
         functionResult.CopyContentOf(v)
         Return Nothing

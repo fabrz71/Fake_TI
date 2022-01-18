@@ -22,10 +22,14 @@ Partial Class frmSettings
     'Non modificarla mediante l'editor del codice.
     <System.Diagnostics.DebuggerStepThrough()> _
     Private Sub InitializeComponent()
+        Me.components = New System.ComponentModel.Container()
         Me.Label1 = New System.Windows.Forms.Label()
         Me.txtWorkDir = New System.Windows.Forms.TextBox()
         Me.bWorkDirSelect = New System.Windows.Forms.Button()
         Me.dlgFolderBrowser = New System.Windows.Forms.FolderBrowserDialog()
+        Me.bApply = New System.Windows.Forms.Button()
+        Me.bCancel = New System.Windows.Forms.Button()
+        Me.ToolTip1 = New System.Windows.Forms.ToolTip(Me.components)
         Me.SuspendLayout()
         '
         'Label1
@@ -36,6 +40,8 @@ Partial Class frmSettings
         Me.Label1.Size = New System.Drawing.Size(109, 15)
         Me.Label1.TabIndex = 0
         Me.Label1.Text = "disk and files folder"
+        Me.ToolTip1.SetToolTip(Me.Label1, "The folder may conatin either \DSK0, \DSK1, ... subfolders with TIFILES" & Global.Microsoft.VisualBasic.ChrW(13) & Global.Microsoft.VisualBasic.ChrW(10) & "(FIAD) s" &
+        "ource files or \Text subfolder with plain .TXT files.")
         '
         'txtWorkDir
         '
@@ -56,11 +62,33 @@ Partial Class frmSettings
         Me.bWorkDirSelect.Text = "Choose"
         Me.bWorkDirSelect.UseVisualStyleBackColor = True
         '
+        'bApply
+        '
+        Me.bApply.Anchor = CType((System.Windows.Forms.AnchorStyles.Bottom Or System.Windows.Forms.AnchorStyles.Right), System.Windows.Forms.AnchorStyles)
+        Me.bApply.Location = New System.Drawing.Point(399, 152)
+        Me.bApply.Name = "bApply"
+        Me.bApply.Size = New System.Drawing.Size(75, 23)
+        Me.bApply.TabIndex = 3
+        Me.bApply.Text = "&Apply"
+        Me.bApply.UseVisualStyleBackColor = True
+        '
+        'bCancel
+        '
+        Me.bCancel.Anchor = CType((System.Windows.Forms.AnchorStyles.Bottom Or System.Windows.Forms.AnchorStyles.Left), System.Windows.Forms.AnchorStyles)
+        Me.bCancel.Location = New System.Drawing.Point(12, 152)
+        Me.bCancel.Name = "bCancel"
+        Me.bCancel.Size = New System.Drawing.Size(64, 23)
+        Me.bCancel.TabIndex = 4
+        Me.bCancel.Text = "&Cancel"
+        Me.bCancel.UseVisualStyleBackColor = True
+        '
         'frmSettings
         '
         Me.AutoScaleDimensions = New System.Drawing.SizeF(7.0!, 15.0!)
         Me.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font
         Me.ClientSize = New System.Drawing.Size(486, 187)
+        Me.Controls.Add(Me.bCancel)
+        Me.Controls.Add(Me.bApply)
         Me.Controls.Add(Me.bWorkDirSelect)
         Me.Controls.Add(Me.txtWorkDir)
         Me.Controls.Add(Me.Label1)
@@ -76,4 +104,7 @@ Partial Class frmSettings
     Friend WithEvents txtWorkDir As TextBox
     Friend WithEvents bWorkDirSelect As Button
     Friend WithEvents dlgFolderBrowser As FolderBrowserDialog
+    Friend WithEvents bApply As Button
+    Friend WithEvents bCancel As Button
+    Friend WithEvents ToolTip1 As ToolTip
 End Class

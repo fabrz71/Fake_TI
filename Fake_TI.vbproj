@@ -10,6 +10,9 @@
     <ApplicationManifest>My Project\app.manifest</ApplicationManifest>
     <Copyright>Fabrizio Volpi</Copyright>
     <Platforms>AnyCPU;x86</Platforms>
+    <Authors>Fabrizio Volpi</Authors>
+    <Company />
+    <Description>A TI99/4A simulator</Description>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
@@ -82,13 +85,13 @@
       <Generator>SettingsSingleFileGenerator</Generator>
       <LastGenOutput>Settings.Designer.vb</LastGenOutput>
     </None>
-    <None Update="second_screen.png">
+    <None Update="Resources\second_screen.png">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-    <None Update="start_screen.png">
+    <None Update="Resources\start_screen.png">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-    <None Update="ti99_charset.png">
+    <None Update="Resources\ti99_charset.png">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>

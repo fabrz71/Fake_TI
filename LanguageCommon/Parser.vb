@@ -12,7 +12,6 @@ Public Structure HeaderAndArguments
     Dim header As String
     Dim joinedArguments As String
     Dim argumentsInBrackets As Boolean
-    'Dim correctArgsFormat As Boolean
     Dim onlyNumericArguments As Boolean
     Dim argn As Integer
     Dim args As String()
@@ -24,11 +23,11 @@ Module Parser
     ''' dove A e B sono interi positivi ordinati.
     ''' Sia A che B possono essere omessi ma non contemporaneamente.
     ''' Puo' comparire solo A senza "-", per un intervallo degenere (A=B).
-    ''' Restituisce 0 quando il valore non è definito.
-    ''' Restituisce A = -1 se A non è convertibile in numero.
+    ''' (funzione utile per comando LIST)
     ''' </summary>
     ''' <param name="s"></param>
-    ''' <returns>intervallo descritto dalla stringa</returns>
+    ''' <returns>Intervallo descritto dalla stringa.
+    ''' 0 quando il valore non è definito. -1 se A non è convertibile in numero.</returns>
     Function GetInterval(ByRef s As String) As Interval
         Dim intrv As New Interval(0, 0)
         If Not String.IsNullOrEmpty(s) Then
@@ -43,7 +42,7 @@ Module Parser
             Else ' trattino presente
                 If i > 0 Then ' A e' definito
                     Try
-                        intrv.startp = Convert.ToInt32(s.Substring(0, i - 1))
+                        intrv.startp = Convert.ToInt32(s.Substring(0, i))
                     Catch ex As Exception
                         intrv.startp = -1
                     End Try
@@ -65,7 +64,7 @@ Module Parser
     Public Function GetNumericParams(ByRef paramStr As String, ByRef separator As String) As Integer()
         Dim params As String() = paramStr.Split(separator)
         Dim n As Integer = params.Length
-        Dim args(n) As Integer
+        Dim args(n - 1) As Integer
         For i As Integer = 0 To n - 1
             Try
                 args(i) = Convert.ToInt32(params(i))
@@ -91,7 +90,7 @@ Module Parser
     End Function
 
 
-    ' restituisce posizione della prima parentesi chiusa piu' esterna,
+    ' restituisce posizione nella stringa della prima parentesi chiusa piu' esterna,
     ' a partire da sx verso dx
     ' restituisce -1 in caso di difetto
     Public Function SearchClosingBracket(ByRef str As String, Optional ByRef startFromIdx As Integer = 0) As Integer
@@ -204,4 +203,100 @@ Module Parser
         Return Nothing
     End Function
 
+    ' increments idx
+    Public Function ExtractUIntegerFromString(ByRef str As String, ByRef idx As Integer) As UInt32
+        If String.IsNullOrEmpty(str) Then Return 0
+        Dim ch As Char
+        Dim l As Integer = str.Length
+        Dim nStr As String = ""
+        Dim res As UInt32
+        If idx >= str.Length Then Return 0
+
+        While str.Chars(idx) = " "c
+            idx += 1
+        End While
+
+        ch = str.Chars(idx)
+        While ch >= "0"c And ch <= "9"c
+            nStr &= ch
+            idx += 1
+            If idx = l Then
+                ch = " "c
+                Exit While
+            End If
+            ch = str.Chars(idx)
+        End While
+        If ch <> " " Then Return 0 ' number right-delimitation not correct
+
+        Try
+            res = Convert.ToUInt32(nStr)
+        Catch ex As Exception
+            Warn(mhdr & ".ExtractUIntegerFromString", ex.Message)
+            res = 0
+        End Try
+
+        Return res
+    End Function
+
+    Public Function GetNumericStringLength(ByRef str As String, ByVal idx As Integer) As Integer
+        If String.IsNullOrEmpty(str) Then Return 0
+        Dim ch As Char
+        Dim startp As Integer = idx
+        Dim dot As Boolean = False
+        Dim ex As Boolean = False
+        Dim dgt As Boolean = False
+        Dim l As Integer = str.Length
+        If idx >= str.Length Then Return 0
+
+        ch = str.Chars(idx)
+        idx += 1
+        While ch = " "c
+            ch = str.Chars(idx)
+            idx += 1
+            If idx = l Then Return 0
+        End While
+        If ch = "+"c Or ch = "-"c Then
+            ch = str.Chars(idx)
+            idx += 1
+            If idx = l Then Return 0
+        End If
+
+        Do
+            If ch = "."c Then
+                If dot Or ex Then Return 0 Else dot = True
+            ElseIf ch = "E"c Then
+                If ex Or (Not dgt) Then Return 0 Else ex = True
+            ElseIf ch >= "0"c And ch <= "9"c Then
+                If Not ex Then dgt = True
+            ElseIf ch = " "c Then
+                idx -= 1
+                Exit Do
+            Else
+                Return 0
+            End If
+            If idx = l Then Exit Do
+            ch = str.Chars(idx)
+            idx += 1
+        Loop
+
+        If Not dgt Then Return 0
+        Return idx - startp
+    End Function
+
+    ' Converte array di variabili in array di valori interi.
+    ' Se almeno una variabile dell'array non e' numerica, restituisce nothing.
+    Public Function GetIntegerArrayFromVars(ByRef vars As Variable()) As Integer()
+        If vars Is Nothing Then Return Nothing
+        Dim l As Integer = vars.Length
+        If l = 0 Then Return Nothing
+        Dim intVal(l - 1) As Integer
+        For i As Integer = 0 To l - 1
+            If Not vars(i).isNumeric() Then
+                'SetError(ErrorId.STR_NUM_MISMATCH)
+                Return Nothing
+            End If
+            intVal(i) = vars(i).GetInteger()
+        Next
+        Return intVal
+    End Function
 End Module

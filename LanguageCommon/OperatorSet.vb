@@ -138,13 +138,13 @@ Public Class OperatorSet
         Do
             ch = exprStr.Chars(i)
             ' ricerca apici
-            If ch = Chr(34) Then
+            If ch = """"c Then
                 Try
                     j = exprStr.IndexOf(Chr(34), i + 1)
                 Catch ex As Exception
                     Exit Do
                 End Try
-                i = j
+                If j = -1 Then Exit Do Else i = j
             ElseIf ch = "("c Then
                 j = Parser.SearchClosingBracket(exprStr, i)
                 If j = -1 Then Exit Do Else i = j

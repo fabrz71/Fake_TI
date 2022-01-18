@@ -40,6 +40,10 @@ Public Class Variable
         CreateSimple(noNameStr, VarType.STRNG, value)
     End Sub
 
+    Sub New(value As Integer)
+        CreateSimple(noNameStr, VarType.FLOAT, value)
+    End Sub
+
     Sub New(value As Double)
         CreateSimple(noNameStr, VarType.FLOAT, value)
     End Sub

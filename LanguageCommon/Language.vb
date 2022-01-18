@@ -1,5 +1,5 @@
 ﻿Public MustInherit Class Language
-    Inherits SSS
+    Inherits ROM
 
     Public code As Code
     Public variables As VarTable
@@ -39,4 +39,15 @@
     Public MustOverride Function GetErrorMessage(Optional ByRef optionalFinalArg As String = Nothing) As String
     Public MustOverride Function GetWarningMessage(Optional ByRef optionalFinalArg As String = Nothing) As String
     'Public MustOverride Function GetResultTypeFromOperation(v1 As Variable, v2 As Variable) As Integer
+
+    Public MustOverride Function EncodeCodeLine(codeLine As String) As String
+
+    Public Sub ClearProgram()
+        code.Clear()
+    End Sub
+
+    Public Sub ClearVariables()
+        variables.Clear()
+    End Sub
+
 End Class

@@ -1,8 +1,8 @@
 ﻿Public Class TiBasicConsole
     Inherits TiConsole
 
-    Public Sub New(videoGraphics As TiVideo, container As PictureBox)
-        MyBase.New(videoGraphics, container)
+    Public Sub New(machine As TI99, container As PictureBox)
+        MyBase.New(machine, container)
         SetTextMargins(2, 29)
     End Sub
 
@@ -20,7 +20,7 @@
         'curC = lMargin
         StartTextInput()
         If Not String.IsNullOrEmpty(presetInputText) Then Print(presetInputText)
-        If presetInputCursorColumn > 0 Then SetCursorPosition(curR, presetInputCursorColumn)
+        If presetInputCursorColumn > 0 Then SetCursorPosition(curR, lMargin + presetInputCursorColumn)
     End Sub
 
 End Class

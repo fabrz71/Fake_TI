@@ -3,14 +3,14 @@
 Imports NAudio.Wave
 
 Public Enum WaveForm
-    Square = SampleProviders.SignalGeneratorType.Square
-    Sinusoidal = SampleProviders.SignalGeneratorType.Sin
-    Triangular = SampleProviders.SignalGeneratorType.Triangle
-    SawTooth = SampleProviders.SignalGeneratorType.SawTooth
-    Noise = SampleProviders.SignalGeneratorType.White
+    SQR = SampleProviders.SignalGeneratorType.Square
+    SIN = SampleProviders.SignalGeneratorType.Sin
+    TRI = SampleProviders.SignalGeneratorType.Triangle
+    SWT = SampleProviders.SignalGeneratorType.SawTooth
+    NOISE = SampleProviders.SignalGeneratorType.White
 End Enum
-Public Structure VoiceParameters
-    Dim frerquency As Integer
+Public Structure VoiceParameter
+    Dim frequency As Integer
     Dim volume As Byte
 End Structure
 
@@ -35,7 +35,7 @@ Public Class TiSound
     Protected rnd As Random
     Private disposedValue As Boolean
 
-    Sub New(renderBox As PictureBox)
+    Sub New()
         For i As Integer = 0 To 3
             wavePlayer(i) = New WaveOutEvent()
         Next i
@@ -81,15 +81,15 @@ Public Class TiSound
     End Sub
 
     Public Sub Tone(frequency As Integer, duration As Integer)
-        PlayTone(0, WaveForm.Triangular, frequency, duration)
+        PlayTone(0, WaveForm.TRI, frequency, duration)
     End Sub
 
     Public Sub Beep()
-        PlayTone(0, WaveForm.Triangular, BEEP_FREQ, BEEP_TIME)
+        PlayTone(0, WaveForm.TRI, BEEP_FREQ, BEEP_TIME)
     End Sub
 
     Public Sub ErrorBeep()
-        PlayTone(0, WaveForm.Square, ERROR_BEEP_FREQ, ERROR_BEEP_TIME)
+        PlayTone(0, WaveForm.SQR, ERROR_BEEP_FREQ, ERROR_BEEP_TIME)
     End Sub
 
     Protected Overridable Sub Dispose(disposing As Boolean)
